@@ -1,0 +1,101 @@
+package db
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log"
+	"time"
+
+	_ "github.com/go-sql-driver/mysql"
+	"dist-db/master/config"
+)
+
+var DB *sql.DB
+
+func Init(cfg *config.Config) {
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/?parseTime=true",
+		cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort)
+
+	var err error
+	DB, err = sql.Open("mysql", dsn)
+	if err != nil {
+		log.Fatalf("Failed to open database: %v", err)
+	}
+
+	// Connection pool settings
+	DB.SetMaxOpenConns(25)
+	DB.SetMaxIdleConns(5)
+	DB.SetConnMaxLifetime(5 * time.Minute)
+
+	if err = DB.Ping(); err != nil {
+		log.Fatalf("Failed to ping database: %v", err)
+	}
+
+	log.Println("Connected to MySQL server")
+
+	// Create system database if not exists
+	_, err = DB.Exec("CREATE DATABASE IF NOT EXISTS " + cfg.DBName)
+	if err != nil {
+		log.Fatalf("Failed to create system database: %v", err)
+	}
+	_, err = DB.Exec("USE " + cfg.DBName)
+	if err != nil {
+		log.Fatalf("Failed to select system database: %v", err)
+	}
+
+	// Create metadata tables
+	createTables()
+}
+
+func createTables() {
+	queries := []string{
+	   `CREATE TABLE IF NOT EXISTS distdb_system.replication_queue (
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
+		query TEXT NOT NULL,
+		args JSON,
+		source_worker_id VARCHAR(36) NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		retries INT DEFAULT 0,
+		last_attempt TIMESTAMP NULL,
+		status ENUM('pending','processing','completed','failed') DEFAULT 'pending'
+)`,
+		`CREATE TABLE IF NOT EXISTS distdb_system.worker_nodes (
+			id VARCHAR(36) PRIMARY KEY,   -- UUID
+			name VARCHAR(100) NOT NULL,
+			address VARCHAR(255) NOT NULL,
+			status ENUM('up','down','unknown') DEFAULT 'unknown',
+			last_heartbeat TIMESTAMP NULL,
+			registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+	}
+
+	for _, q := range queries {
+		if _, err := DB.Exec(q); err != nil {
+			log.Fatalf("Failed to create tables: %v", err)
+		}
+	}
+	log.Println("System tables ready")
+}
+
+func EnqueueReplication(query string, args ...interface{}) {
+	EnqueueReplicationWithSource(query, args, "")
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		log.Printf("Failed to marshal args: %v", err)
+		return
+	}
+	_, err = DB.Exec("INSERT INTO distdb_system.replication_queue (query, args, status) VALUES (?, ?, 'pending')", query, string(argsJSON))
+	if err != nil {
+		log.Printf("Failed to enqueue replication: %v", err)
+	}
+}
+// EnqueueReplicationWithSource inserts a write and records which worker sent it.
+func EnqueueReplicationWithSource(query string, args []interface{}, sourceWorkerID string) {
+	argsJSON, _ := json.Marshal(args)
+	_, err := DB.Exec("INSERT INTO distdb_system.replication_queue (query, args, source_worker_id, status) VALUES (?, ?, ?, 'pending')",
+		query, string(argsJSON), sourceWorkerID)
+	if err != nil {
+		log.Printf("Failed to enqueue replication with source: %v", err)
+	}
+}
