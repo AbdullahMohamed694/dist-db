@@ -114,6 +114,9 @@ func registerWithMaster(cfg *config.Config, workerID string) {
 }
 
 func getLocalIP() string {
-	// Use localhost for development; replace with real IP detection later
-	return "localhost"
+    // Use environment variable if set, otherwise localhost
+    if ip := os.Getenv("WORKER_IP"); ip != "" {
+        return ip
+    }
+    return "localhost"
 }
