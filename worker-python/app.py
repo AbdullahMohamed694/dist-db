@@ -67,10 +67,11 @@ def sanitize_identifier(name):
 
 # ---------- Master registration ----------
 def register_with_master():
+    worker_ip = os.environ.get('WORKER_IP', 'localhost')
     data = {
         "id": WORKER_ID,
         "name": WORKER_NAME,
-        "address": f"http://{os.environ.get('WORKER_IP', 'localhost')}:{WORKER_PORT}"
+        "address": f"http://{worker_ip}:{WORKER_PORT}"
     }
     try:
         resp = requests.post(f"{MASTER_URL}/api/workers/register", json=data, timeout=5)
