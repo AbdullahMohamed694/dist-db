@@ -5,7 +5,7 @@ import json
 import threading
 import time
 import re
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 import requests
 
 app = Flask(__name__)
@@ -128,14 +128,12 @@ def master_health_check():
     """Placeholder: pings workers like the Go master."""
     while True:
         time.sleep(10)
-        # Real implementation would check worker_nodes table
         print("Master health check tick")
 
 def master_replication():
     """Placeholder: replays pending writes to workers."""
     while True:
         time.sleep(10)
-        # Real implementation would read replication_queue
         print("Master replication tick")
 
 # ---------- Health endpoint ----------
@@ -161,7 +159,12 @@ def replicate():
         print(f"Replication error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ---------- CRUD endpoints ----------
+# ---------- Dashboard ----------
+@app.route('/dashboard')
+def serve_dashboard():
+    return send_file('../frontend/dashboard.html')
+
+# ---------- CRUD endpoints (open to all nodes) ----------
 @app.route('/api/databases/<dbname>/tables/<table>/rows', methods=['POST'])
 def insert_row(dbname, table):
     dbname = sanitize_identifier(dbname)
@@ -263,24 +266,23 @@ def delete_row(dbname, table, row_id):
     forward_to_master(query, [row_id])
     return jsonify({"message": "row deleted"})
 
-# ---------- Master‑only DDL endpoints ----------
-def require_master():
-    if not is_master:
-        return jsonify({"error": "not master"}), 503
-    return None
-
+# ---------- DDL endpoints (databases/tables) ----------
+# CREATE DATABASE – allowed on all nodes
 @app.route('/api/databases', methods=['POST'])
 def create_database():
-    if not is_master: return jsonify({"error": "not master"}), 503
     data = request.get_json()
     name = sanitize_identifier(data.get('name', ''))
-    if not name: return jsonify({"error": "name required"}), 400
-    execute_query(f"CREATE DATABASE IF NOT EXISTS `{name}`")
+    if not name:
+        return jsonify({"error": "name required"}), 400
+    query = f"CREATE DATABASE IF NOT EXISTS `{name}`"
+    execute_query(query)
+    # Forward the DDL to master for replication to other nodes
+    forward_to_master(query, [])
     return jsonify({"message": "database created", "name": name})
 
+# LIST DATABASES – allowed on all nodes
 @app.route('/api/databases', methods=['GET'])
 def list_databases():
-    if not is_master: return jsonify({"error": "not master"}), 503
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SHOW DATABASES")
@@ -288,23 +290,29 @@ def list_databases():
         'information_schema', 'mysql', 'performance_schema', 'sys',
         'distdb_system', 'distdb_worker'
     )]
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     return jsonify({"databases": dbs})
 
+# DROP DATABASE – master ONLY
 @app.route('/api/databases/<dbname>', methods=['DELETE'])
 def drop_database(dbname):
-    if not is_master: return jsonify({"error": "not master"}), 503
+    if not is_master:
+        return jsonify({"error": "only master can drop database"}), 403
     dbname = sanitize_identifier(dbname)
-    execute_query(f"DROP DATABASE IF EXISTS `{dbname}`")
+    query = f"DROP DATABASE IF EXISTS `{dbname}`"
+    execute_query(query)
+    forward_to_master(query, [])
     return jsonify({"message": "database dropped"})
 
+# CREATE TABLE – allowed on all nodes
 @app.route('/api/databases/<dbname>/tables', methods=['POST'])
 def create_table(dbname):
-    if not is_master: return jsonify({"error": "not master"}), 503
     dbname = sanitize_identifier(dbname)
     data = request.get_json()
     tname = sanitize_identifier(data.get('name', ''))
-    if not tname: return jsonify({"error": "table name required"}), 400
+    if not tname:
+        return jsonify({"error": "table name required"}), 400
     cols = data.get('columns', [])
     col_defs = "`id` CHAR(36) PRIMARY KEY"
     for c in cols:
@@ -312,12 +320,14 @@ def create_table(dbname):
         ctype = c.get('type', '')
         if cname and cname != 'id':
             col_defs += f", `{cname}` {ctype}"
-    execute_query(f"CREATE TABLE IF NOT EXISTS `{dbname}`.`{tname}` ({col_defs})")
+    query = f"CREATE TABLE IF NOT EXISTS `{dbname}`.`{tname}` ({col_defs})"
+    execute_query(query)
+    forward_to_master(query, [])
     return jsonify({"message": "table created"})
 
+# LIST TABLES – allowed on all nodes
 @app.route('/api/databases/<dbname>/tables', methods=['GET'])
 def list_tables(dbname):
-    if not is_master: return jsonify({"error": "not master"}), 503
     dbname = sanitize_identifier(dbname)
     conn = get_db_connection()
     cur = conn.cursor()
@@ -328,15 +338,42 @@ def list_tables(dbname):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
 
+# DROP TABLE – allowed on all nodes
 @app.route('/api/databases/<dbname>/tables/<table>', methods=['DELETE'])
 def drop_table(dbname, table):
-    if not is_master: return jsonify({"error": "not master"}), 503
     dbname = sanitize_identifier(dbname)
     table = sanitize_identifier(table)
-    execute_query(f"DROP TABLE IF EXISTS `{dbname}`.`{table}`")
+    query = f"DROP TABLE IF EXISTS `{dbname}`.`{table}`"
+    execute_query(query)
+    forward_to_master(query, [])
     return jsonify({"message": "table dropped"})
+
+# TABLE SCHEMA – allowed on all nodes
+@app.route('/api/databases/<dbname>/tables/<table>/schema', methods=['GET'])
+def get_table_schema(dbname, table):
+    dbname = sanitize_identifier(dbname)
+    table = sanitize_identifier(table)
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(f"SHOW COLUMNS FROM `{dbname}`.`{table}`")
+        columns = []
+        for row in cur.fetchall():
+            field, col_type = row[0], row[1]
+            if isinstance(field, bytes):
+                field = field.decode('utf-8')
+            if isinstance(col_type, bytes):
+                col_type = col_type.decode('utf-8')
+            columns.append({"name": field, "type": col_type})
+        return jsonify({"columns": columns})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cur.close()
+        conn.close()
 
 # ---------- Node management ----------
 @app.route('/api/node/promote', methods=['POST'])

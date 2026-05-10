@@ -11,9 +11,15 @@
 <body class="container py-4">
     <h1 class="mb-4">DistDB Dashboard</h1>
 
+    <!-- Manual Refresh Button -->
+    <div class="mb-3">
+        <button class="btn btn-secondary" onclick="refreshAll()">Refresh Now</button>
+        <small class="text-muted ms-2">Auto‑refresh disabled</small>
+    </div>
+
     <!-- Worker Status -->
     <div class="card mb-4">
-        <div class="card-header">Worker Nodes (auto‑refreshes 5s)</div>
+        <div class="card-header">Worker Nodes</div>
         <div class="card-body">
             <table class="table" id="worker-table">
                 <thead>
@@ -42,10 +48,12 @@
                 </div>
                 <div class="col-auto">
                     <input type="text" id="new-db-name" class="form-control" placeholder="New DB name">
-                    <button class="btn btn-success mt-2" onclick="createDatabase()">Create DB</button>
+                    <button id="create-db-btn" class="btn btn-success mt-2" onclick="createDatabase()">Create
+                        DB</button>
                 </div>
                 <div class="col-auto">
-                    <button class="btn btn-danger mt-2" onclick="dropDatabase()">Drop Selected DB</button>
+                    <button id="drop-db-btn" class="btn btn-danger mt-2" onclick="dropDatabase()">Drop Selected
+                        DB</button>
                 </div>
             </div>
         </div>
@@ -62,11 +70,12 @@
                     </select>
                 </div>
                 <div class="col-auto">
-                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createTableModal">Create
-                        Table</button>
+                    <button id="create-table-btn" class="btn btn-primary" data-bs-toggle="modal"
+                        data-bs-target="#createTableModal">Create Table</button>
                 </div>
                 <div class="col-auto">
-                    <button class="btn btn-danger" onclick="deleteTable()">Delete Selected Table</button>
+                    <button id="delete-table-btn" class="btn btn-danger" onclick="deleteTable()">Delete Selected
+                        Table</button>
                 </div>
             </div>
         </div>
@@ -142,18 +151,54 @@
         // ---------- Globals ----------
         let currentDB = '', currentTable = '';
         let currentTableSchema = [];
+        let isMasterNode = false;
+
+        // ---------- Detect if this node is master ----------
+        async function checkIfMaster() {
+            try {
+                const resp = await fetch('/api/workers');
+                if (resp.ok) {
+                    isMasterNode = true;
+                } else {
+                    isMasterNode = false;
+                }
+            } catch (e) {
+                isMasterNode = false;
+            }
+
+            const dropDbBtn = document.getElementById('drop-db-btn');
+
+            // Only Drop DB is hidden on workers
+            if (!isMasterNode) {
+                if (dropDbBtn) dropDbBtn.style.display = 'none';
+            } else {
+                if (dropDbBtn) dropDbBtn.style.display = '';
+            }
+            // All other buttons (create-db-btn, create-table-btn, delete-table-btn) always visible
+        }
+
+        // ---------- Refresh everything manually ----------
+        async function refreshAll() {
+            await checkIfMaster();
+            loadWorkers();
+            loadDatabases();
+            if (currentDB) loadTables();
+            if (currentTable) loadRows();
+        }
 
         // ---------- Initial loads ----------
-        loadWorkers();
-        loadDatabases();
-        setInterval(loadWorkers, 5000);
+        async function init() {
+            await checkIfMaster();
+            loadWorkers();
+            loadDatabases();
+        }
+        init();
 
         // ---------- Workers ----------
         async function loadWorkers() {
             const tbody = document.querySelector('#worker-table tbody');
             tbody.innerHTML = '';
 
-            // 1. Show the Master
             let masterStatus = 'unknown';
             try {
                 const masterResp = await fetch('/health');
@@ -170,22 +215,21 @@
                 <td></td>
             </tr>`;
 
-            // 2. Show workers
-            try {
-                const resp = await fetch('/api/workers');
-                const data = await resp.json();
-                (data.workers || []).forEach(w => {
-                    const promoteBtn = `<button class="btn btn-sm btn-warning" onclick="promoteWorker('${w.address}')">Promote</button>`;
-                    tbody.innerHTML += `<tr>
-                        <td>${w.name}</td>
-                        <td>${w.address}</td>
-                        <td><span class="badge bg-${w.status === 'up' ? 'success' : 'danger'}">${w.status}</span></td>
-                        <td>${w.last_heartbeat || 'never'}</td>
-                        <td>${promoteBtn}</td>
-                    </tr>`;
-                });
-            } catch (e) {
-                // master might be down, could not fetch workers – ignore
+            if (isMasterNode) {
+                try {
+                    const resp = await fetch('/api/workers');
+                    const data = await resp.json();
+                    (data.workers || []).forEach(w => {
+                        const promoteBtn = `<button class="btn btn-sm btn-warning" onclick="promoteWorker('${w.address}')">Promote</button>`;
+                        tbody.innerHTML += `<tr>
+                            <td>${w.name}</td>
+                            <td>${w.address}</td>
+                            <td><span class="badge bg-${w.status === 'up' ? 'success' : 'danger'}">${w.status}</span></td>
+                            <td>${w.last_heartbeat || 'never'}</td>
+                            <td>${promoteBtn}</td>
+                        </tr>`;
+                    });
+                } catch (e) { }
             }
         }
 
@@ -233,7 +277,6 @@
             });
         }
 
-        // ---------- Table selection ----------
         function onTableSelect() {
             currentTable = document.getElementById('table-select').value;
             document.getElementById('row-section').style.display = currentTable ? '' : 'none';
@@ -360,7 +403,7 @@
             loadRows();
         }
 
-        // ---------- Delete ----------
+        // ---------- Delete Row ----------
         async function deleteRow(id) {
             if (!confirm('Are you sure?')) return;
             await fetch(`/api/databases/${currentDB}/tables/${currentTable}/rows/${id}`, { method: 'DELETE' });
@@ -381,6 +424,10 @@
         }
 
         async function dropDatabase() {
+            if (!isMasterNode) {
+                alert('Only the master can drop databases. Please connect to the master node.');
+                return;
+            }
             if (!currentDB) return alert('Select a database first');
             if (!confirm(`Really drop database ${currentDB}?`)) return;
             await fetch(`/api/databases/${currentDB}`, { method: 'DELETE' });

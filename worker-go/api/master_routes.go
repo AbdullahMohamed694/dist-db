@@ -3,7 +3,7 @@ package api
 import (
 	"log"
 	"net/http"
-
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"dist-db/worker-go/config"
 	"dist-db/worker-go/db"
@@ -18,7 +18,6 @@ func requireMaster(c *gin.Context) bool {
 }
 
 func CreateDatabase(c *gin.Context) {
-	if !requireMaster(c) { return }
 	var req struct {
 		Name string `json:"name" binding:"required"`
 	}
@@ -39,7 +38,7 @@ func CreateDatabase(c *gin.Context) {
 }
 
 func ListDatabases(c *gin.Context) {
-	if !requireMaster(c) { return }
+	// (no master guard – listing is safe for all nodes)
 	rows, err := db.DB.Query("SHOW DATABASES")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -77,7 +76,6 @@ func DropDatabase(c *gin.Context) {
 }
 
 func CreateTable(c *gin.Context) {
-	if !requireMaster(c) { return }
 	dbName := sanitizeDBName(c.Param("dbname"))
 	var req struct {
 		Name    string                   `json:"name" binding:"required"`
@@ -109,7 +107,6 @@ func CreateTable(c *gin.Context) {
 }
 
 func ListTables(c *gin.Context) {
-	if !requireMaster(c) { return }
 	dbName := sanitizeDBName(c.Param("dbname"))
 	rows, err := db.DB.Query("SHOW TABLES FROM `" + dbName + "`")
 	if err != nil {
@@ -128,7 +125,6 @@ func ListTables(c *gin.Context) {
 }
 
 func DropTable(c *gin.Context) {
-	if !requireMaster(c) { return }
 	dbName := sanitizeDBName(c.Param("dbname"))
 	tableName := sanitizeIdentifier(c.Param("table"))
 	if dbName == "" || tableName == "" {
@@ -144,4 +140,42 @@ func DropTable(c *gin.Context) {
 	}
 	db.EnqueueReplication(query)
 	c.JSON(http.StatusOK, gin.H{"message": "table dropped"})
+}
+func GetTableSchema(c *gin.Context) {
+	dbName := sanitizeDBName(c.Param("dbname"))
+	tableName := sanitizeIdentifier(c.Param("table"))
+	if dbName == "" || tableName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid database or table"})
+		return
+	}
+
+	rows, err := db.DB.Query("SHOW COLUMNS FROM `" + dbName + "`.`" + tableName + "`")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	columns := []gin.H{}
+	for rows.Next() {
+		var field, colType, null, key, extra interface{}
+		var def interface{}
+		if err := rows.Scan(&field, &colType, &null, &key, &def, &extra); err != nil {
+			continue
+		}
+		// Convert []byte to string
+		name := fmt.Sprintf("%v", field)
+		if b, ok := field.([]byte); ok {
+			name = string(b)
+		}
+		typeStr := fmt.Sprintf("%v", colType)
+		if b, ok := colType.([]byte); ok {
+			typeStr = string(b)
+		}
+		columns = append(columns, gin.H{
+			"name": name,
+			"type": typeStr,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"columns": columns})
 }

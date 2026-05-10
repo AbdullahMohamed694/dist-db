@@ -40,6 +40,8 @@ func main() {
 	// Replication endpoint – used by master to push SQL
 	router.POST("/api/replicate", replicateHandler)
 
+	router.GET("/api/databases/:dbname/tables/:table/schema", api.GetTableSchema)
+
 	// Worker CRUD
 	router.POST("/api/databases/:dbname/tables/:table/rows", api.InsertRow)
 	router.GET("/api/databases/:dbname/tables/:table/rows", api.SelectRows)
@@ -58,6 +60,7 @@ func main() {
 	router.POST("/api/node/promote", api.PromoteNode)
 	router.POST("/api/node/update-master", api.UpdateMaster)
 
+	router.StaticFile("/dashboard", "../frontend/dashboard.html")
 	// Start pending writes replayer
 	//go replication.StartPendingReplayer()
 
@@ -83,6 +86,8 @@ func replicateHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	
 
 	log.Println("Replication executed successfully")
 	c.JSON(http.StatusOK, gin.H{"message": "replicated"})
