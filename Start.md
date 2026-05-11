@@ -9,3 +9,10 @@ $env:DB_PASSWORD="your_password"
 $env:DB_NAME="distdb_worker"
 $env:IS_MASTER="false"
 $env:STANDBY="false"
+
+mysql -u root
+
+-- On the worker’s MySQL (each worker has its own)
+USE distdb_worker;
+TRUNCATE TABLE pending_writes;
+
