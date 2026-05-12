@@ -148,6 +148,18 @@
     </div>
 
     <script>
+        // ---------- API Key ----------
+        const API_KEY = 'distdb-secret-key-2026';   // must match the key set on all nodes
+
+        // Helper that returns headers with the API key
+        function apiHeaders(method = null) {
+            const h = { 'X-API-Key': API_KEY };
+            if (method === 'POST' || method === 'PUT' || method === 'DELETE') {
+                h['Content-Type'] = 'application/json';
+            }
+            return h;
+        }
+
         // ---------- Globals ----------
         let currentDB = '', currentTable = '';
         let currentTableSchema = [];
@@ -156,7 +168,7 @@
         // ---------- Detect if this node is master ----------
         async function checkIfMaster() {
             try {
-                const resp = await fetch('/api/workers');
+                const resp = await fetch('/api/workers', { headers: apiHeaders() });
                 if (resp.ok) {
                     isMasterNode = true;
                 } else {
@@ -201,7 +213,7 @@
 
             let masterStatus = 'unknown';
             try {
-                const masterResp = await fetch('/health');
+                const masterResp = await fetch('/health', { headers: apiHeaders() });
                 const masterData = await masterResp.json();
                 masterStatus = masterData.status === 'ok' ? 'up' : 'down';
             } catch (e) {
@@ -217,7 +229,7 @@
 
             if (isMasterNode) {
                 try {
-                    const resp = await fetch('/api/workers');
+                    const resp = await fetch('/api/workers', { headers: apiHeaders() });
                     const data = await resp.json();
                     (data.workers || []).forEach(w => {
                         const promoteBtn = `<button class="btn btn-sm btn-warning" onclick="promoteWorker('${w.address}')">Promote</button>`;
@@ -236,7 +248,10 @@
         async function promoteWorker(addr) {
             if (!confirm('Promote ' + addr + ' to master?')) return;
             try {
-                const resp = await fetch(addr + '/api/node/promote', { method: 'POST' });
+                const resp = await fetch(addr + '/api/node/promote', {
+                    method: 'POST',
+                    headers: apiHeaders('POST')
+                });
                 const data = await resp.json();
                 alert(data.message || 'Promotion successful');
                 loadWorkers();
@@ -247,7 +262,7 @@
 
         // ---------- Databases ----------
         async function loadDatabases() {
-            const resp = await fetch('/api/databases');
+            const resp = await fetch('/api/databases', { headers: apiHeaders() });
             const data = await resp.json();
             const select = document.getElementById('db-select');
             select.innerHTML = '<option value="">-- Select database --</option>';
@@ -268,7 +283,7 @@
 
         async function loadTables() {
             if (!currentDB) return;
-            const resp = await fetch(`/api/databases/${currentDB}/tables`);
+            const resp = await fetch(`/api/databases/${currentDB}/tables`, { headers: apiHeaders() });
             const data = await resp.json();
             const select = document.getElementById('table-select');
             select.innerHTML = '<option value="">-- Select table --</option>';
@@ -288,7 +303,7 @@
 
         async function loadTableSchema() {
             if (!currentDB || !currentTable) return;
-            const resp = await fetch(`/api/databases/${currentDB}/tables/${currentTable}/schema`);
+            const resp = await fetch(`/api/databases/${currentDB}/tables/${currentTable}/schema`, { headers: apiHeaders() });
             const data = await resp.json();
             currentTableSchema = data.columns || [];
         }
@@ -296,7 +311,7 @@
         // ---------- Rows ----------
         async function loadRows() {
             if (!currentDB || !currentTable) return;
-            const resp = await fetch(`/api/databases/${currentDB}/tables/${currentTable}/rows`);
+            const resp = await fetch(`/api/databases/${currentDB}/tables/${currentTable}/rows`, { headers: apiHeaders() });
             const data = await resp.json();
             const thead = document.getElementById('row-thead');
             const tbody = document.querySelector('#row-table tbody');
@@ -350,7 +365,7 @@
             fields.forEach(f => { if (f.value !== '') body[f.dataset.name] = f.value; });
             const resp = await fetch(`/api/databases/${currentDB}/tables/${currentTable}/rows`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: apiHeaders('POST'),
                 body: JSON.stringify(body)
             });
             if (!resp.ok) {
@@ -366,7 +381,7 @@
         let editingRowId = null;
         async function editRow(id) {
             editingRowId = id;
-            const resp = await fetch(`/api/databases/${currentDB}/tables/${currentTable}/rows?where=id='${id}'`);
+            const resp = await fetch(`/api/databases/${currentDB}/tables/${currentTable}/rows?where=id='${id}'`, { headers: apiHeaders() });
             const data = await resp.json();
             if (!data.rows || data.rows.length === 0) {
                 alert('Row not found');
@@ -391,7 +406,7 @@
             fields.forEach(f => { body[f.dataset.name] = f.value; });
             const resp = await fetch(`/api/databases/${currentDB}/tables/${currentTable}/rows/${editingRowId}`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
+                headers: apiHeaders('PUT'),
                 body: JSON.stringify(body)
             });
             if (!resp.ok) {
@@ -406,7 +421,10 @@
         // ---------- Delete Row ----------
         async function deleteRow(id) {
             if (!confirm('Are you sure?')) return;
-            await fetch(`/api/databases/${currentDB}/tables/${currentTable}/rows/${id}`, { method: 'DELETE' });
+            await fetch(`/api/databases/${currentDB}/tables/${currentTable}/rows/${id}`, {
+                method: 'DELETE',
+                headers: apiHeaders('DELETE')
+            });
             loadRows();
         }
 
@@ -416,7 +434,7 @@
             if (!name) return alert('Name required');
             await fetch('/api/databases', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: apiHeaders('POST'),
                 body: JSON.stringify({ name })
             });
             document.getElementById('new-db-name').value = '';
@@ -430,7 +448,10 @@
             }
             if (!currentDB) return alert('Select a database first');
             if (!confirm(`Really drop database ${currentDB}?`)) return;
-            await fetch(`/api/databases/${currentDB}`, { method: 'DELETE' });
+            await fetch(`/api/databases/${currentDB}`, {
+                method: 'DELETE',
+                headers: apiHeaders('DELETE')
+            });
             currentDB = '';
             document.getElementById('db-select').value = '';
             document.getElementById('table-section').style.display = 'none';
@@ -441,7 +462,10 @@
         async function deleteTable() {
             if (!currentDB || !currentTable) return alert('Select a table first');
             if (!confirm(`Really drop table ${currentTable}?`)) return;
-            await fetch(`/api/databases/${currentDB}/tables/${currentTable}`, { method: 'DELETE' });
+            await fetch(`/api/databases/${currentDB}/tables/${currentTable}`, {
+                method: 'DELETE',
+                headers: apiHeaders('DELETE')
+            });
             currentTable = '';
             document.getElementById('table-select').value = '';
             document.getElementById('row-section').style.display = 'none';
@@ -470,7 +494,7 @@
             }
             await fetch(`/api/databases/${currentDB}/tables`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: apiHeaders('POST'),
                 body: JSON.stringify({ name: tableName, columns })
             });
             bootstrap.Modal.getInstance(document.getElementById('createTableModal')).hide();

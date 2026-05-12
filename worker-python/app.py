@@ -49,6 +49,13 @@ def ensure_system_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Clear old pending writes from previous runs
+    try:
+        cur.execute(f"TRUNCATE TABLE {WORKER_SYSTEM_DB}.pending_writes")
+        print("Pending writes queue cleared on startup")
+    except Exception as e:
+        print(f"Warning: could not truncate pending_writes: {e}")
+
     cur.close()
     conn.close()
     print("Pending writes table ready")
@@ -67,14 +74,16 @@ def sanitize_identifier(name):
 
 # ---------- Master registration ----------
 def register_with_master():
+    api_key = os.environ.get("API_KEY", "distdb-default-key")
     worker_ip = os.environ.get('WORKER_IP', 'localhost')
     data = {
         "id": WORKER_ID,
         "name": WORKER_NAME,
         "address": f"http://{worker_ip}:{WORKER_PORT}"
     }
+    headers = {"X-API-Key": api_key}
     try:
-        resp = requests.post(f"{MASTER_URL}/api/workers/register", json=data, timeout=5)
+        resp = requests.post(f"{MASTER_URL}/api/workers/register", json=data, headers=headers, timeout=5)
         if resp.ok:
             print("Registered with master successfully")
         else:
@@ -85,17 +94,23 @@ def register_with_master():
 # ---------- Master forwarding + pending queue ----------
 def forward_to_master(query, args):
     def _forward():
+        print(f"DEBUG: Attempting to forward to master: {query[:80]}")
         body = {"query": query, "args": args}
-        headers = {"X-Source-Worker-ID": WORKER_ID}
+        api_key = os.environ.get("API_KEY", "distdb-default-key")
+        headers = {
+            "X-Source-Worker-ID": WORKER_ID,
+            "X-API-Key": api_key
+        }
         try:
+            print(f"DEBUG: POST to {MASTER_URL}/api/replicate")
             resp = requests.post(f"{MASTER_URL}/api/replicate", json=body, headers=headers, timeout=3)
+            print(f"DEBUG: Master response status: {resp.status_code}")
             if resp.status_code >= 400:
-                raise Exception("Master returned error")
+                raise Exception(f"Master returned {resp.status_code}: {resp.text}")
+            else:
+                print(f"DEBUG: Successfully forwarded to master")
         except Exception as e:
-            print(f"Master unreachable, queuing locally: {e}")
-            args_json = json.dumps(args)
-            q = f"INSERT INTO {WORKER_SYSTEM_DB}.pending_writes (query, args) VALUES (%s, %s)"
-            execute_query(q, [query, args_json])
+            print(f"DEBUG: Master unreachable: {e}")
 
     threading.Thread(target=_forward, daemon=True).start()
 

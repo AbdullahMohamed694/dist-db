@@ -46,22 +46,30 @@ func Init(cfg *config.Config) {
 
 	// Create metadata tables
 	createTables()
+
+	// Clear old queue entries from previous runs
+	_, err = DB.Exec("TRUNCATE TABLE distdb_system.replication_queue")
+	if err != nil {
+		log.Printf("Warning: could not truncate replication_queue: %v", err)
+	} else {
+		log.Println("Replication queue cleared on startup")
+	}
 }
 
 func createTables() {
 	queries := []string{
-	   `CREATE TABLE IF NOT EXISTS distdb_system.replication_queue (
-		id BIGINT AUTO_INCREMENT PRIMARY KEY,
-		query TEXT NOT NULL,
-		args JSON,
-		source_worker_id VARCHAR(36) NULL,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		retries INT DEFAULT 0,
-		last_attempt TIMESTAMP NULL,
-		status ENUM('pending','processing','completed','failed') DEFAULT 'pending'
-)`,
+		`CREATE TABLE IF NOT EXISTS distdb_system.replication_queue (
+			id BIGINT AUTO_INCREMENT PRIMARY KEY,
+			query TEXT NOT NULL,
+			args JSON,
+			source_worker_id VARCHAR(36) NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			retries INT DEFAULT 0,
+			last_attempt TIMESTAMP NULL,
+			status ENUM('pending','processing','completed','failed') DEFAULT 'pending'
+		)`,
 		`CREATE TABLE IF NOT EXISTS distdb_system.worker_nodes (
-			id VARCHAR(36) PRIMARY KEY,   -- UUID
+			id VARCHAR(36) PRIMARY KEY,
 			name VARCHAR(100) NOT NULL,
 			address VARCHAR(255) NOT NULL,
 			status ENUM('up','down','unknown') DEFAULT 'unknown',
@@ -78,19 +86,14 @@ func createTables() {
 	log.Println("System tables ready")
 }
 
+// EnqueueReplication stores a SQL statement in the replication queue.
+// This is used for writes that originate on the master itself (source is empty).
 func EnqueueReplication(query string, args ...interface{}) {
 	EnqueueReplicationWithSource(query, args, "")
-	argsJSON, err := json.Marshal(args)
-	if err != nil {
-		log.Printf("Failed to marshal args: %v", err)
-		return
-	}
-	_, err = DB.Exec("INSERT INTO distdb_system.replication_queue (query, args, status) VALUES (?, ?, 'pending')", query, string(argsJSON))
-	if err != nil {
-		log.Printf("Failed to enqueue replication: %v", err)
-	}
 }
+
 // EnqueueReplicationWithSource inserts a write and records which worker sent it.
+// If sourceWorkerID is empty, the write originated on the master.
 func EnqueueReplicationWithSource(query string, args []interface{}, sourceWorkerID string) {
 	argsJSON, _ := json.Marshal(args)
 	_, err := DB.Exec("INSERT INTO distdb_system.replication_queue (query, args, source_worker_id, status) VALUES (?, ?, ?, 'pending')",

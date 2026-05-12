@@ -52,6 +52,14 @@ func Init(cfg *config.Config) {
 		log.Fatalf("Failed to create pending_writes: %v", err)
 	}
 	log.Println("Pending writes table ready")
+
+	// Clear old pending writes from previous runs
+	_, err = DB.Exec("TRUNCATE TABLE " + WorkerSystemDB + ".pending_writes")
+	if err != nil {
+		log.Printf("Warning: could not truncate pending_writes: %v", err)
+	} else {
+		log.Println("Pending writes queue cleared on startup")
+	}
 }
 
 // EnqueuePending inserts a query into the local pending queue (used when master is down)

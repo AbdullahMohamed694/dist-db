@@ -94,15 +94,22 @@ func replicateHandler(c *gin.Context) {
 }
 
 func registerWithMaster(cfg *config.Config, workerID string) {
+	apiKey := os.Getenv("API_KEY")
+	if apiKey == "" {
+		apiKey = "distdb-default-key"
+	}
+
 	reqBody := shared.WorkerRegisterRequest{
 		ID:      workerID,
 		Name:    cfg.WorkerName,
 		Address: "http://" + getLocalIP() + ":" + cfg.ServerPort,
 	}
-
 	jsonData, _ := json.Marshal(reqBody)
-	resp, err := http.Post(cfg.MasterURL+"/api/workers/register",
-		"application/json", bytes.NewBuffer(jsonData))
+	req, _ := http.NewRequest("POST", cfg.MasterURL+"/api/workers/register", bytes.NewBuffer(jsonData))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Printf("Warning: could not register with master: %v", err)
 		return

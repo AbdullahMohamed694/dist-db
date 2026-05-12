@@ -18,6 +18,8 @@ func main() {
 
 	router := gin.Default()
 
+	router.Use(api.APIKeyMiddleware())
+
 	// Health checks
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "node": "master"})
