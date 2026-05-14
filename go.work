@@ -4,4 +4,5 @@ use (
 	./master
 	./shared
 	./worker-go
+	./worker-go2
 )

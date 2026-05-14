@@ -13,7 +13,6 @@ import (
 	"dist-db/worker-go/db"
 	"dist-db/shared"
 	"dist-db/worker-go/api"
-	"dist-db/worker-go/health"
 )
 
 func main() {
@@ -31,9 +30,6 @@ func main() {
 
 	// Register with the current master
 	registerWithMaster(cfg, cfg.WorkerID)
-
-	// Start auto‑failover (only does something if STANDBY=true)
-	go health.StartAutoFailover()
 
 	router := gin.Default()
 
@@ -63,7 +59,6 @@ func main() {
 	// Node management
 	router.POST("/api/node/promote", api.PromoteNode)
 	router.POST("/api/node/update-master", api.UpdateMaster)
-	router.GET("/api/workers", api.ListWorkers)
 
 	router.StaticFile("/dashboard", "../frontend/dashboard.html")
 	// Start pending writes replayer

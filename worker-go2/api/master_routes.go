@@ -7,8 +7,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"dist-db/worker-go/config"
 	"dist-db/worker-go/db"
-	"database/sql"
-	"time"
 )
 
 func requireMaster(c *gin.Context) bool {
@@ -180,40 +178,4 @@ func GetTableSchema(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"columns": columns})
-}
-
-func ListWorkers(c *gin.Context) {
-	if !requireMaster(c) { return }
-
-	rows, err := db.DB.Query("SELECT id, name, address, status, last_heartbeat FROM distdb_system.worker_nodes ORDER BY last_heartbeat DESC")
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	defer rows.Close()
-
-	seen := map[string]bool{}
-	workers := []gin.H{}
-	for rows.Next() {
-		var id, name, address, status string
-		var lastHb sql.NullTime
-		if err := rows.Scan(&id, &name, &address, &status, &lastHb); err != nil {
-			continue
-		}
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		worker := gin.H{
-			"id":      id,
-			"name":    name,
-			"address": address,
-			"status":  status,
-		}
-		if lastHb.Valid {
-			worker["last_heartbeat"] = lastHb.Time.Format(time.RFC3339)
-		}
-		workers = append(workers, worker)
-	}
-	c.JSON(http.StatusOK, gin.H{"workers": workers})
 }
