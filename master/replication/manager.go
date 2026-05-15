@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"dist-db/master/db"
@@ -68,11 +69,17 @@ func processPending() {
 }
 
 func sendToWorkers(query string, args []interface{}, sourceWorkerID string) bool {
-	workerRows, err := db.DB.Query("SELECT id, address FROM distdb_system.worker_nodes WHERE status = 'up'")
+	// Query ALL workers, not just 'up' ones – so we know if any missed the update
+	workerRows, err := db.DB.Query("SELECT id, address, status FROM distdb_system.worker_nodes")
 	if err != nil {
 		return false
 	}
 	defer workerRows.Close()
+
+	apiKey := os.Getenv("API_KEY")
+	if apiKey == "" {
+		apiKey = "distdb-default-key"
+	}
 
 	body := map[string]interface{}{
 		"query": query,
@@ -82,8 +89,8 @@ func sendToWorkers(query string, args []interface{}, sourceWorkerID string) bool
 
 	allOk := true
 	for workerRows.Next() {
-		var workerID, addr string
-		if err := workerRows.Scan(&workerID, &addr); err != nil {
+		var workerID, addr, status string
+		if err := workerRows.Scan(&workerID, &addr, &status); err != nil {
 			continue
 		}
 
@@ -93,7 +100,19 @@ func sendToWorkers(query string, args []interface{}, sourceWorkerID string) bool
 			continue
 		}
 
-		resp, err := http.Post(addr+"/api/replicate", "application/json", bytes.NewBuffer(jsonBody))
+		// If worker is down, we can't send to it → mark as failed
+		if status != "up" {
+			log.Printf("Worker %s is down, will retry later", workerID)
+			allOk = false
+			continue
+		}
+
+		// Send to healthy worker with API key
+		req, _ := http.NewRequest("POST", addr+"/api/replicate", bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-API-Key", apiKey)
+
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil || resp.StatusCode >= 400 {
 			log.Printf("Failed to replicate to %s: %v", addr, err)
 			allOk = false
