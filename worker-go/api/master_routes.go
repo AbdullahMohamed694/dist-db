@@ -35,7 +35,7 @@ func CreateDatabase(c *gin.Context) {
 		return
 	}
 	// Enqueue replication (will be processed by this node's manager if master)
-	ForwardWrite(query, []interface{}{})
+	ForwardToMaster(query, []interface{}{})
 	c.JSON(http.StatusOK, gin.H{"message": "database created", "name": req.Name})
 }
 
@@ -73,7 +73,7 @@ func DropDatabase(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	ForwardWrite(query, []interface{}{})
+	ForwardToMaster(query, []interface{}{})
 	c.JSON(http.StatusOK, gin.H{"message": "database dropped"})
 }
 
@@ -104,7 +104,7 @@ func CreateTable(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	ForwardWrite(query, []interface{}{})
+	ForwardToMaster(query, []interface{}{})
 	c.JSON(http.StatusOK, gin.H{"message": "table created"})
 }
 
@@ -140,7 +140,7 @@ func DropTable(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	ForwardWrite(query, []interface{}{})
+	ForwardToMaster(query, []interface{}{})
 	c.JSON(http.StatusOK, gin.H{"message": "table dropped"})
 }
 func GetTableSchema(c *gin.Context) {

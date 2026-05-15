@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -13,7 +14,6 @@ import (
 	"dist-db/worker-go/config"
 	"dist-db/worker-go/db"
 )
-
 
 // ---------- CRUD Handlers ----------
 func InsertRow(c *gin.Context) {
@@ -152,6 +152,11 @@ func DeleteRow(c *gin.Context) {
 // ---------- Master forwarding ----------
 func forwardToMaster(query string, args []interface{}, workerID string) {
 	go func() {
+		apiKey := os.Getenv("API_KEY")
+		if apiKey == "" {
+			apiKey = "distdb-default-key"
+		}
+
 		body := map[string]interface{}{
 			"query": query,
 			"args":  args,
@@ -161,6 +166,7 @@ func forwardToMaster(query string, args []interface{}, workerID string) {
 		req, _ := http.NewRequest("POST", cfg.MasterURL+"/api/replicate", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Source-Worker-ID", workerID)
+		req.Header.Set("X-API-Key", apiKey)   // <-- ADDED: master requires this
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil || resp.StatusCode >= 400 {

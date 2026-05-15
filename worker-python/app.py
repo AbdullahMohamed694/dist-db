@@ -36,6 +36,7 @@ def get_db_connection():
         password=DB_PASSWORD, autocommit=True
     )
 
+
 def ensure_system_db():
     """Create system database and pending_writes table if not exist."""
     conn = get_db_connection()

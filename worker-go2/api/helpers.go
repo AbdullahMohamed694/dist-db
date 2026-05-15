@@ -6,16 +6,14 @@ import (
 	"log"
 	"net/http"
 	"dist-db/worker-go/config"
-	//"dist-db/worker-go/db"
+	"dist-db/worker-go/db"
 	"strings"
 	"os"
 )
 
-// ForwardWrite sends a SQL statement to the master. If the master is unreachable,
-// the statement is stored in the local pending_writes table.
-func ForwardWrite(query string, args []interface{}) {
+
+func ForwardToMaster(query string, args []interface{}) {
 	go func() {
-		cfg := config.Cfg
 		apiKey := os.Getenv("API_KEY")
 		if apiKey == "" {
 			apiKey = "distdb-default-key"
@@ -26,15 +24,17 @@ func ForwardWrite(query string, args []interface{}) {
 			"args":  args,
 		}
 		jsonBytes, _ := json.Marshal(body)
+
+		cfg := config.Load()
 		req, _ := http.NewRequest("POST", cfg.MasterURL+"/api/replicate", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Source-Worker-ID", cfg.WorkerID)
 		req.Header.Set("X-API-Key", apiKey)
+		req.Header.Set("X-Source-Worker-ID", cfg.WorkerID)
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil || resp.StatusCode >= 400 {
-			log.Printf("Master unreachable, dropping write (pending disabled)")
-			// db.EnqueuePending(query, args)  // <-- COMMENTED OUT
+			log.Printf("Master unreachable, queuing write locally")
+			db.EnqueuePending(query, args)
 		}
 		if resp != nil {
 			resp.Body.Close()
