@@ -47,12 +47,12 @@ func Init(cfg *config.Config) {
 	// Create metadata tables
 	createTables()
 
-	// Clear old queue entries from previous runs
-	_, err = DB.Exec("TRUNCATE TABLE distdb_system.replication_queue")
+	// Clean up only successfully completed entries – keep pending/failed for retry
+	_, err = DB.Exec("DELETE FROM distdb_system.replication_queue WHERE status = 'completed'")
 	if err != nil {
-		log.Printf("Warning: could not truncate replication_queue: %v", err)
+		log.Printf("Warning: could not clean replication_queue: %v", err)
 	} else {
-		log.Println("Replication queue cleared on startup")
+		log.Println("Completed replication entries cleaned on startup")
 	}
 }
 
